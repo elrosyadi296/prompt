@@ -478,389 +478,236 @@
 </div>
 
 <script src="data_prompts.js"></script>
+
 <script>
-const GSHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxJMvSXB_IR04m6mnoMLeHHg4iOuUd8Yxmom4sOfGmq6h5vaKa2bFenGTl7-xkbhexK/exec";
+  let allPrompts = [];
+  let currentCategory = 'all';
 
-const CATS = [
-  { id: 'all',       label: 'Semua' },
-  { id: 'coding',    label: 'Ngoding' },
-  { id: 'writing',   label: 'Menulis & SEO' },
-  { id: 'islamic',   label: 'Konten Islami' },
-  { id: 'image-gen', label: 'Prompt Gambar' },
-  { id: 'video-gen', label: 'Prompt Video' },
-  { id: 'data',      label: 'Data & Sekolah' },
-];
+  document.addEventListener("DOMContentLoaded", async () => {
+    // 1. Ambil data dari Google Apps Script
+    allPrompts = await fetchPromptsFromGAS();
 
-const MODEL_LABEL = {
-  claude: 'Claude',
-  gpt:    'GPT',
-  gemini: 'Gemini',
-  image:  'Image AI',
-  video:  'Video AI',
-};
-
-const STORAGE_KEY = 'bilikprompt_data_v2';
-
-// Data prompts sudah dipisah ke prompts.js
-// Pastikan script <script src="prompts.js"> dipanggil sebelum script ini.
-
-function safeInitAd(element) {
-  if (!element) return;
-  if (element.getAttribute('data-adsbygoogle-status') === 'done') return;
-
-  if (element.offsetWidth > 0 || element.clientHeight > 0) {
-    try {
-      (window.adsbygoogle = window.window.adsbygoogle || []).push({});
-      element.setAttribute('data-adsbygoogle-status', 'done');
-    } catch (err) {
-      console.warn("AdSense push deferred or failed for target element: ", err.message);
+    // 2. Jika data kosong, tampilkan empty state
+    if (!allPrompts || allPrompts.length === 0) {
+      document.getElementById('emptyState').style.display = 'block';
+      return;
     }
-  } else {
-    setTimeout(() => {
-      if (element.offsetWidth > 0) {
-        try {
-          (window.adsbygoogle = window.window.adsbygoogle || []).push({});
-          element.setAttribute('data-adsbygoogle-status', 'done');
-        } catch (err) {
-          console.warn("Deferred AdSense fallback failed: ", err.message);
-        }
-      }
-    }, 350);
-  }
-}
 
-const DEFAULT_PROMPTS = JSON.parse(JSON.stringify(PROMPTS));
-let prompts = mergeSavedStats(PROMPTS);
+    // 3. Update Ringkasan Hero Stat
+    updateHeroStats();
 
-function mergeSavedStats(basePrompts) {
-  let saved = null;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) saved = JSON.parse(raw);
-  } catch (e) {}
-  if (!saved || !Array.isArray(saved)) return JSON.parse(JSON.stringify(basePrompts));
+    // 4. Buat Tombol Filter Kategori
+    renderFilters();
 
-  const savedById = {};
-  saved.forEach(p => { savedById[p.id] = p; });
+    // 5. Render Daftar Prompt di Grid UI Asli
+    renderGrid(allPrompts);
 
-  return basePrompts.map(p => {
-    const s = savedById[p.id];
-    return s ? { ...p, views: s.views || 0, copies: s.copies || 0 } : { ...p, views: 0, copies: 0 };
+    // 6. Jalankan Event Listener Pencarian & Keyboard Shortcut
+    initSearchAndControls();
   });
-}
 
-function saveData() {
-  try {
-    const minimal = prompts.map(p => ({ id: p.id, views: p.views || 0, copies: p.copies || 0 }));
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(minimal));
-  } catch (e) {}
-}
+  function updateHeroStats() {
+    const totalPrompts = allPrompts.length;
+    const categories = new Set(allPrompts.map(p => p.category)).size;
+    const totalViews = allPrompts.reduce((acc, p) => acc + (Number(p.views) || 0), 0);
+    const totalCopies = allPrompts.reduce((acc, p) => acc + (Number(p.copies) || 0), 0);
 
-async function sendActivityToGSheet(event, prompt) {
-  if (!GSHEET_WEB_APP_URL || !GSHEET_WEB_APP_URL.startsWith("https://script.google.com/macros/")) {
-    return;
+    document.getElementById('countPill').innerText = `${totalPrompts} prompt`;
+    document.getElementById('statTotal').innerText = totalPrompts;
+    document.getElementById('statCat').innerText = categories;
+    document.getElementById('statViews').innerText = totalViews;
+    document.getElementById('statCopies').innerText = totalCopies;
   }
 
-  const payload = {
-    event: event, // 'view' atau 'copy'
-    id: prompt.id,
-    title: prompt.title,
-    cat: prompt.cat,
-    model: prompt.model,
-    body: prompt.body
-  };
+  function renderFilters() {
+    const filtersContainer = document.getElementById('filters');
+    filtersContainer.innerHTML = '';
 
-  try {
-    await fetch(GSHEET_WEB_APP_URL, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(payload)
+    const categories = ['all', ...new Set(allPrompts.map(p => p.category))];
+
+    categories.forEach(cat => {
+      const btn = document.createElement('button');
+      btn.className = `pill ${cat === currentCategory ? 'active' : ''}`;
+      btn.innerText = cat === 'all' ? 'Semua' : cat;
+      btn.onclick = () => {
+        currentCategory = cat;
+        document.querySelectorAll('.pill').forEach(el => el.classList.remove('active'));
+        btn.classList.add('active');
+        filterAndRender();
+      };
+      filtersContainer.appendChild(btn);
     });
-  } catch (error) {
-    console.warn("GSheet tracking pipeline skipped due to transport limits: ", error);
   }
-}
 
-let activeCat = 'all';
-let searchTerm = '';
+  function filterAndRender() {
+    const query = document.getElementById('searchInput').value.toLowerCase().trim();
+    
+    const filtered = allPrompts.filter(p => {
+      const matchCategory = currentCategory === 'all' || p.category === currentCategory;
+      const matchSearch = p.title.toLowerCase().includes(query) || 
+                          p.prompt.toLowerCase().includes(query) || 
+                          p.category.toLowerCase().includes(query);
+      return matchCategory && matchSearch;
+    });
 
-function renderFilters() {
-  const el = document.getElementById('filters');
-  el.innerHTML = CATS.map(c => `<button class="pill ${c.id === activeCat ? 'active' : ''}" data-cat="${c.id}">${c.label}</button>`).join('');
-  el.querySelectorAll('.pill').forEach(btn => {
-    btn.addEventListener('click', () => { activeCat = btn.dataset.cat; renderFilters(); renderGrid(); });
-  });
-}
+    renderGrid(filtered);
+  }
 
-function matches(p) {
-  const inCat = activeCat === 'all' || p.cat === activeCat;
-  const term = searchTerm.trim().toLowerCase();
-  const inSearch = !term || (p.title + p.desc + p.body + MODEL_LABEL[p.model]).toLowerCase().includes(term);
-  return inCat && inSearch;
-}
+  function renderGrid(prompts) {
+    const grid = document.getElementById('grid');
+    const emptyState = document.getElementById('emptyState');
+    grid.innerHTML = '';
 
-function renderStats() {
-  document.getElementById('statTotal').textContent = prompts.length;
-  document.getElementById('statCat').textContent = new Set(prompts.map(p => p.cat)).size;
-  document.getElementById('statViews').textContent = prompts.reduce((s, p) => s + (p.views || 0), 0);
-  document.getElementById('statCopies').textContent = prompts.reduce((s, p) => s + (p.copies || 0), 0);
-  document.getElementById('countPill').textContent = prompts.length + ' prompt';
-}
-
-function mediaThumb(p) {
-  if (!p.media) return '';
-  const m = p.media;
-  if (m.url) {
-    if (m.type === 'video') {
-      return `<div class="media-thumb"><video src="${m.url}" muted loop playsinline preload="metadata"></video><span class="play-badge">▶</span></div>`;
+    if (prompts.length === 0) {
+      emptyState.style.display = 'block';
+      return;
     }
-    return `<div class="media-thumb"><img src="${m.url}" alt="Contoh hasil ${p.title}" loading="lazy"></div>`;
-  }
-  return `<div class="media-thumb"><div class="ph"><span class="ico">${m.type === 'video' ? '🎬' : '🖼️'}</span>Contoh hasil belum diunggah</div></div>`;
-}
+    emptyState.style.display = 'none';
 
-function renderGrid() {
-  const grid = document.getElementById('grid');
-  const list = prompts.filter(matches).sort((a, b) => (b.pinned - a.pinned));
-  document.getElementById('emptyState').style.display = list.length ? 'none' : 'block';
-  
-  let gridContent = '';
-  
-  list.forEach((p, i) => {
-    gridContent += `
-      <article class="card ${p.pinned ? 'pinned' : ''}" style="animation-delay:${i * 0.045}s" data-id="${p.id}">
+    prompts.forEach((item, index) => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.onclick = (e) => {
+        // Mencegah trigger modal jika tombol salin yang diklik
+        if (e.target.closest('.copy-btn')) return;
+        openModal(item);
+      };
+
+      card.innerHTML = `
         <div>
           <div class="card-top">
-            <span class="badge ${p.model}">${MODEL_LABEL[p.model]}</span>
-            ${p.pinned ? '<span class="pin-star" title="Disematkan">★</span>' : ''}
+            <span class="badge gpt">${item.category}</span>
           </div>
-          <h3>${p.title}</h3>
-          <p class="desc">${p.desc}</p>
+          <h3>${item.title}</h3>
+          <p class="desc">${item.prompt.length > 120 ? item.prompt.substring(0, 120) + '...' : item.prompt}</p>
         </div>
         <div class="meta">
           <div class="meta-left">
-            <span class="cat-tag">${CATS.find(c => c.id === p.cat)?.label || p.cat}</span>
-            <span class="stat-inline" data-stat="${p.id}">👁 ${p.views || 0} · 📋 ${p.copies || 0}</span>
+            <span class="stat-inline" title="Dilihat">👁️ <span id="view-count-${item.id}">${item.views}</span></span>
+            <span class="stat-inline" title="Disalin">📋 <span id="copy-count-${item.id}">${item.copies}</span></span>
           </div>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            ${p.media && p.media.url ? `<button class="media-btn" data-media="${p.id}" title="Lihat Contoh Hasil">🖼️ Hasil</button>` : ''}
-            <button class="copy-btn" data-copy="${p.id}">Salin</button>
-          </div>
+          <button class="copy-btn" onclick="copyPrompt('${item.id}', \`${escapePrompt(item.prompt)}\`, event)">
+            Salin
+          </button>
         </div>
-      </article>
-    `;
-    
-    // STRATEGIC ADSENSE SLOT #2: Native Grid Card Integration
-    if (i === 2) {
-      gridContent += `
-        <article class="card ad-card" style="animation-delay:${(i+1) * 0.045}s">
-          <div style="font-size: 0.62rem; color: var(--muted-2); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 12px; text-align: center;">Sponsor</div>
-          <div style="flex-grow: 1; display: flex; align-items: center; justify-content: center; min-height: 150px; width:100%;">
+      `;
+
+      grid.appendChild(card);
+
+      // Rekam view secara otomatis saat prompt dirender
+      trackPromptEvent(item.id, "view");
+      
+      // Update angka view lokal
+      item.views = (Number(item.views) || 0) + 1;
+      const viewSpan = document.getElementById(`view-count-${item.id}`);
+      if (viewSpan) viewSpan.innerText = item.views;
+
+      // Sisipkan Space AdSense In-Feed setiap 3 kartu
+      if ((index + 1) % 3 === 0) {
+        const adCard = document.createElement('div');
+        adCard.className = 'card ad-card';
+        adCard.innerHTML = `
+          <div class="adsense-wrapper" style="border:none; background:transparent;">
             <ins class="adsbygoogle"
-                 style="display:block; width:100%; min-height:150px;"
-                 data-ad-client="ca-pub-2096485944749698"
-                 data-ad-slot="2222222222"
+                 style="display:block"
                  data-ad-format="fluid"
                  data-ad-layout-key="-fb+5w+4e-db+86"
-                 data-full-width-responsive="true"></ins>
+                 data-ad-client="ca-pub-2096485944749698"
+                 data-ad-slot="3724692396"></ins>
           </div>
-          <div style="margin-top: 15px; font-size: 0.72rem; color: var(--muted-2); text-align: center;">Dukung website kami dengan melihat iklan sponsor ini.</div>
-        </article>
-      `;
-    }
-  });
-
-  grid.innerHTML = gridContent;
-
-  grid.querySelectorAll('.card').forEach(card => {
-    if (card.classList.contains('ad-card')) {
-      const insNode = card.querySelector('ins.adsbygoogle');
-      safeInitAd(insNode);
-      return;
-    }
-    card.addEventListener('click', (e) => { 
-      if (e.target.closest('.copy-btn') || e.target.closest('.media-btn')) return; 
-      openModal(Number(card.dataset.id)); 
+        `;
+        grid.appendChild(adCard);
+        try { (adsbygoogle = window.adsbygoogle || []).push({}); } catch (e) {}
+      }
     });
-  });
-  
-  grid.querySelectorAll('.media-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const p = prompts.find(x => x.id === Number(btn.dataset.media));
-      openLightbox(p);
-    });
-  });
 
-  grid.querySelectorAll('.copy-btn').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const p = prompts.find(x => x.id === Number(btn.dataset.copy));
-      doCopy(p, btn);
-    });
-  });
-}
-
-function updateStatDisplays(p) {
-  document.querySelectorAll(`[data-stat="${p.id}"]`).forEach(el => el.textContent = `👁 ${p.views || 0} · 📋 ${p.copies || 0}`);
-  const modalStat = document.getElementById('modalStat');
-  if (modalStat && modalStat.dataset.id == p.id) modalStat.textContent = `👁 ${p.views || 0} dilihat · 📋 ${p.copies || 0} disalin`;
-  document.getElementById('statViews').textContent = prompts.reduce((s, x) => s + (x.views || 0), 0);
-  document.getElementById('statCopies').textContent = prompts.reduce((s, x) => s + (x.copies || 0), 0);
-}
-
-function doCopy(p, btnEl) {
-  try {
-    const el = document.createElement('textarea');
-    el.value = p.body;
-    document.body.appendChild(el);
-    el.select();
-    document.execCommand('copy');
-    document.body.removeChild(el);
-    
-    p.copies = (p.copies || 0) + 1;
-    saveData();
-    updateStatDisplays(p);
-    showToast('✓ Prompt disalin');
-    
-    sendActivityToGSheet('copy', p);
-
-    if (btnEl) {
-      const original = btnEl.textContent;
-      btnEl.textContent = 'Tersalin ✓';
-      btnEl.classList.add('done');
-      setTimeout(() => { btnEl.textContent = original; btnEl.classList.remove('done'); }, 1600);
-    }
-  } catch (err) {
-    showToast('Gagal menyalin — silakan salin manual');
-  }
-}
-
-function showToast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  clearTimeout(window.__toastTimer);
-  window.__toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
-}
-
-function openModal(id) {
-  const p = prompts.find(x => x.id === id);
-  if (!p) return;
-  p.views = (p.views || 0) + 1;
-  saveData();
-
-  sendActivityToGSheet('view', p);
-
-  const box = document.getElementById('modalBox');
-  const mediaBlock = p.media && p.media.url
-    ? `<div class="modal-media">${p.media.type === 'video'
-        ? `<video src="${p.media.url}" controls playsinline></video>`
-        : `<img src="${p.media.url}" alt="Contoh hasil ${p.title}">`}</div>`
-    : '';
-  box.innerHTML = `
-    <div class="modal-head">
-      <div class="modal-badges"><span class="badge ${p.model}">${MODEL_LABEL[p.model]}</span>${p.pinned ? '<span class="pin-star">★</span>' : ''}</div>
-      <button class="close-x" id="closeModal">✕</button>
-    </div>
-    <h2>${p.title}</h2>
-    <div class="desc">${p.desc}</div>
-    <span class="stat-inline" id="modalStat" data-id="${p.id}">👁 ${p.views} dilihat · 📋 ${p.copies || 0} disalin</span>
-    ${mediaBlock}
-    <div class="prompt-box">${p.body.replace(/</g, '&lt;')}</div>
-    
-    <!-- STRATEGIC ADSENSE SLOT #3: Modal Placement (Safe lazy pushed) -->
-    <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--panel-border); padding: 12px; border-radius: var(--r-sm); margin: 15px 0; text-align:center; min-height:110px;">
-      <div style="font-size: 0.58rem; color: var(--muted-2); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 6px;">Sponsor</div>
-      <ins class="adsbygoogle"
-           id="modalInsAd"
-           style="display:block; min-height:90px;"
-           data-ad-client="ca-pub-2096485944749698"
-           data-ad-slot="3333333333"
-           data-ad-format="horizontal"
-           data-full-width-responsive="true"></ins>
-    </div>
-
-    <div class="modal-actions">
-      <button class="btn btn-primary" id="modalCopy">Salin Prompt</button>
-      <button class="btn btn-ghost" id="modalClose2">Tutup</button>
-    </div>
-  `;
-  
-  const overlay = document.getElementById('overlay');
-  overlay.classList.add('show');
-  
-  document.getElementById('closeModal').addEventListener('click', closeModal);
-  document.getElementById('modalClose2').addEventListener('click', closeModal);
-  document.getElementById('modalCopy').addEventListener('click', () => doCopy(p, document.getElementById('modalCopy')));
-  
-  updateStatDisplays(p);
-  renderGrid();
-
-  setTimeout(() => {
-    const modalAdIns = document.getElementById('modalInsAd');
-    safeInitAd(modalAdIns);
-  }, 310);
-}
-
-function closeModal() { document.getElementById('overlay').classList.remove('show'); }
-document.getElementById('overlay').addEventListener('click', (e) => { if (e.target.id === 'overlay') closeModal(); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
-
-function openLightbox(p) {
-  if (!p || !p.media || !p.media.url) return;
-  p.views = (p.views || 0) + 1;
-  saveData();
-  
-  sendActivityToGSheet('view', p);
-
-  const content = document.getElementById('lightboxContent');
-  if (p.media.type === 'video') {
-    content.innerHTML = `<video src="${p.media.url}" autoplay loop controls playsinline style="width: 100%; height: auto; max-height: 52vh; border-radius: var(--r-md);"></video>`;
-  } else {
-    content.innerHTML = `<img src="${p.media.url}" alt="Contoh Hasil ${p.title}">`;
+    // Refresh AdSense
+    try { (adsbygoogle = window.adsbygoogle || []).push({}); } catch (e) {}
   }
 
-  document.getElementById('lightboxCaption').textContent = `Contoh Hasil: ${p.title}`;
-  document.getElementById('lightboxOverlay').classList.add('show');
-  
-  updateStatDisplays(p);
-  renderGrid();
-}
+  function openModal(item) {
+    const overlay = document.getElementById('overlay');
+    const modalBox = document.getElementById('modalBox');
 
-function closeLightbox() {
-  document.getElementById('lightboxOverlay').classList.remove('show');
-  document.getElementById('lightboxContent').innerHTML = '';
-}
+    modalBox.innerHTML = `
+      <div class="modal-head">
+        <div class="modal-badges">
+          <span class="badge gpt">${item.category}</span>
+        </div>
+        <button class="close-x" onclick="closeModal()">✕</button>
+      </div>
+      <h2>${item.title}</h2>
+      <span class="stat-inline">👁️ ${item.views} Dilihat · 📋 <span id="modal-copy-count">${item.copies}</span> Disalin</span>
+      <div class="prompt-box">${item.prompt}</div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="copyPrompt('${item.id}', \`${escapePrompt(item.prompt)}\`, event, true)">Salin Prompt</button>
+        <button class="btn btn-ghost" onclick="closeModal()">Tutup</button>
+      </div>
+    `;
 
-document.getElementById('closeLightbox').addEventListener('click', closeLightbox);
-document.getElementById('lightboxOverlay').addEventListener('click', (e) => {
-  if (e.target.id === 'lightboxOverlay') closeLightbox();
-});
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') closeLightbox();
-});
+    overlay.classList.add('show');
+  }
 
-document.getElementById('searchInput').addEventListener('input', (e) => { searchTerm = e.target.value; renderGrid(); });
-document.addEventListener('keydown', (e) => {
-  if (e.key === '/' && document.activeElement.id !== 'searchInput') { e.preventDefault(); document.getElementById('searchInput').focus(); }
-});
+  function closeModal() {
+    document.getElementById('overlay').classList.remove('show');
+  }
 
-document.getElementById('scrollBtn').addEventListener('click', () => document.querySelector('main').scrollIntoView({ behavior: 'smooth' }));
+  function copyPrompt(id, text, event, isModal = false) {
+    if (event) event.stopPropagation();
 
-window.onload = function() {
-  renderStats();
-  renderFilters();
-  renderGrid();
+    navigator.clipboard.writeText(text).then(() => {
+      showToast("✓ Prompt disalin");
 
-  setTimeout(() => {
-    const heroAdIns = document.querySelector('#heroAdWrapper ins.adsbygoogle');
-    safeInitAd(heroAdIns);
-  }, 150);
-};
+      // Kirim statistik copy ke Spreadsheet
+      trackPromptEvent(id, "copy");
+
+      // Update angka counter secara real-time di UI
+      const targetPrompt = allPrompts.find(p => String(p.id) === String(id));
+      if (targetPrompt) {
+        targetPrompt.copies = (Number(targetPrompt.copies) || 0) + 1;
+        
+        const copySpan = document.getElementById(`copy-count-${id}`);
+        if (copySpan) copySpan.innerText = targetPrompt.copies;
+
+        if (isModal) {
+          const modalCopySpan = document.getElementById('modal-copy-count');
+          if (modalCopySpan) modalCopySpan.innerText = targetPrompt.copies;
+        }
+
+        updateHeroStats();
+      }
+    });
+  }
+
+  function showToast(msg) {
+    const toast = document.getElementById('toast');
+    toast.innerText = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2000);
+  }
+
+  function initSearchAndControls() {
+    const searchInput = document.getElementById('searchInput');
+    searchInput.addEventListener('input', filterAndRender);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement !== searchInput) {
+        e.preventDefault();
+        searchInput.focus();
+      }
+      if (e.key === 'Escape') closeModal();
+    });
+
+    document.getElementById('scrollBtn').onclick = () => {
+      document.querySelector('.controls').scrollIntoView({ behavior: 'smooth' });
+    };
+  }
+
+  function escapePrompt(str) {
+    return str.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
+  }
 </script>
+
+
 </body>
 </html>

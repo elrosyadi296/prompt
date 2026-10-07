@@ -1,20 +1,18 @@
-// GANTI DENGAN URL WEB APP APPS SCRIPT ANDA (berakhiran /exec)
 const GAS_URL = "https://script.google.com/macros/s/AKfycbwjT5_7dw1PkQlGXV3EgrLPok_3XZnqLu2LIHp9DtumINPpqofXi9simwihfLLuNbePjg/exec";
 
-// Ambil data prompt dari Spreadsheet
+// Mengambil daftar prompt dari Apps Script
 async function fetchPromptsFromGAS() {
   try {
     const response = await fetch(GAS_URL);
-    if (!response.ok) throw new Error("Network response was not ok");
     const data = await response.json();
     return data;
   } catch (error) {
-    console.error("Gagal mengambil data dari Google Sheets:", error);
+    console.error("Gagal mengambil data dari Apps Script:", error);
     return [];
   }
 }
 
-// Rekam event (view / copy) ke Spreadsheet
+// Merekam event 'view' atau 'copy' ke Apps Script
 async function trackPromptEvent(id, action) {
   try {
     await fetch(GAS_URL, {
